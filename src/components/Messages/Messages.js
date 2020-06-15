@@ -1,23 +1,98 @@
+// import React from "react";
+// import { Segment, Comment } from "semantic-ui-react";
+// import MessagesHeader from "./MessagesHeader";
+// import MessageForm from "./MessagesForm";
+// import firebase from "../../firebase";
+// import Message from "./Message";
+
+// class Messages extends React.Component {
+//   state = {
+//     messagesRef: firebase.database().ref("messages"),
+//     currentChannel: this.props.currentChannel,
+//     currentUser: this.props.currentUser,
+//     messages: [],
+//     messageLoading: true,
+//   };
+
+//   componentDidMount() {
+//     const { currentChannel, currentUser } = this.state;
+//     if (currentChannel && currentUser) {
+//       this.addListeners(currentChannel.id);
+//     }
+//   }
+
+//   addListeners = (channelId) => {
+//     this.addMessageListener(channelId);
+//   };
+
+//   addMessageListener = (channelId) => {
+//     let loadedMessages = [];
+//     this.state.messagesRef.child(channelId).on("child_added", (snap) => {
+//       loadedMessages.push(snap.val());
+//       console.log(loadedMessages);
+//       this.setState({ messages: loadedMessages, messageLoading: false });
+//     });
+//   };
+
+//   displayMessages = (messages) =>
+//     messages.length > 0 &&
+//     messages.map((message) => (
+//       <Message
+//         key={message.timestamp}
+//         message={message}
+//         user={this.state.currentUser}
+//       />
+//     ));
+
+//   render() {
+//     return (
+//       <React.Fragment>
+//         <MessagesHeader />
+//         <Segment>
+//           <Comment.Group className="messages">
+//             {this.displayMessages(this.state.messages)}
+//           </Comment.Group>
+//         </Segment>
+//         <MessageForm
+//           messagesRef={this.state.messagesRef}
+//           currentChannel={this.state.currentChannel}
+//           currentUser={this.state.currentUser}
+//         />
+//       </React.Fragment>
+//     );
+//   }
+// }
+
+// export default Messages;
+
 import React from "react";
 import { Segment, Comment } from "semantic-ui-react";
-import MessagesHeader from "./MessagesHeader";
-import MessageForm from "./MessagesForm";
 import firebase from "../../firebase";
+import MessagesHeader from "./MessageHeader";
+import MessageForm from "./MessagesForm";
 import Message from "./Message";
 
 class Messages extends React.Component {
   state = {
+    privateChannel: this.props.isPrivateChannel,
+    privateMessageRef: firebase.database().ref("privateMessages"),
     messagesRef: firebase.database().ref("messages"),
-    currentChannel: this.props.currentChannel,
-    currentUser: this.props.currentUser,
     messages: [],
-    messageLoading: true,
+    messagesLoading: true,
+    channel: this.props.currentChannel,
+    user: this.props.currentUser,
+    progressBar: false,
+    numUniqueUsers: "",
+    searchTerm: "",
+    searchLoaded: false,
+    searchResults: [],
   };
 
   componentDidMount() {
-    const { currentChannel, currentUser } = this.state;
-    if (currentChannel && currentUser) {
-      this.addListeners(currentChannel.id);
+    const { channel, user } = this.state;
+
+    if (channel && user) {
+      this.addListeners(channel.id);
     }
   }
 
@@ -27,11 +102,57 @@ class Messages extends React.Component {
 
   addMessageListener = (channelId) => {
     let loadedMessages = [];
-    this.state.messagesRef.child(channelId).on("child_added", (snap) => {
+    const ref = this.getMessagesRef();
+    ref.child(channelId).on("child_added", (snap) => {
       loadedMessages.push(snap.val());
-      console.log(loadedMessages);
-      this.setState({ messages: loadedMessages, messageLoading: false });
+      this.setState({
+        messages: loadedMessages,
+        messagesLoading: false,
+      });
+      this.countUniqueUsers(loadedMessages);
     });
+  };
+
+  countUniqueUsers = (messages) => {
+    const uniqueUsers = messages.reduce((acc, message) => {
+      if (!acc.includes(message.user.name)) {
+        acc.push(message.user.name);
+      }
+      return acc;
+    }, []);
+    const plural = uniqueUsers.length > 1 || uniqueUsers.length === 0;
+    const numUniqueUsers = `${uniqueUsers.length} user${plural ? "s" : ""}`;
+    this.setState({ numUniqueUsers });
+  };
+
+  getMessagesRef = () => {
+    const { messagesRef, privateMessageRef, privateChannel } = this.state;
+    return privateChannel ? privateMessageRef : messagesRef;
+  };
+
+  handleSearchChange = (event) => {
+    this.setState(
+      {
+        searchTerm: event.target.value,
+        searchLoaded: true,
+      },
+      () => this.handleSearchMessages()
+    );
+  };
+
+  handleSearchMessages = () => {
+    const channelMessages = [...this.state.messages];
+    const regex = new RegExp(this.state.searchTerm, "gi");
+    const searchResults = channelMessages.reduce((acc, message) => {
+      if (message.content && message.content.match(regex)) {
+        acc.push(message);
+      }
+      return acc;
+    }, []);
+    this.setState({ searchResults });
+    setTimeout(() => {
+      this.setState({ searchLoaded: false });
+    }, 1000);
   };
 
   displayMessages = (messages) =>
@@ -40,23 +161,63 @@ class Messages extends React.Component {
       <Message
         key={message.timestamp}
         message={message}
-        user={this.state.currentUser}
+        user={this.state.user}
       />
     ));
 
+  isProgressBarVisible = (percent) => {
+    if (percent > 0) {
+      this.setState({ progressBar: true });
+    }
+  };
+
+  displayChannelName = (channel) => {
+    return channel
+      ? `${this.state.privateChannel ? "@" : "#"}${channel.name}`
+      : "";
+  };
+
   render() {
+    const {
+      messagesRef,
+      messages,
+      channel,
+      user,
+      progressBar,
+      numUniqueUsers,
+      searchTerm,
+      searchResults,
+      searchLoaded,
+      privateChannel,
+    } = this.state;
+
     return (
       <React.Fragment>
-        <MessagesHeader />
+        <MessagesHeader
+          channelName={this.displayChannelName(channel)}
+          numUniqueUsers={numUniqueUsers}
+          handleSearchChange={this.handleSearchChange}
+          searchLoaded={searchLoaded}
+          isPrivateChannel={privateChannel}
+        />
+
         <Segment>
-          <Comment.Group className="messages">
-            {this.displayMessages(this.state.messages)}
+          <Comment.Group
+            className={progressBar ? "messages__progress" : "messages"}
+          >
+            {searchTerm
+              ? this.displayMessages(searchResults)
+              : this.displayMessages(messages)}
           </Comment.Group>
         </Segment>
+
         <MessageForm
-          messagesRef={this.state.messagesRef}
-          currentChannel={this.state.currentChannel}
-          currentUser={this.state.currentUser}
+          messagesRef={messagesRef}
+          currentChannel={channel}
+          currentUser={user}
+          isProgressBarVisible={this.isProgressBarVisible}
+          isPrivateChannel={privateChannel}
+          getMessagesRef={this.getMessagesRef}
         />
       </React.Fragment>
     );
